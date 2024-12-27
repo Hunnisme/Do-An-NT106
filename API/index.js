@@ -321,6 +321,12 @@ app.post('/createproject', async (req, res) => {
                 Role: 'Member'
             }));
 
+            const addedEmails = users.map(user => user.Email);
+                addedEmails.forEach(EmailAddr => {
+                    sendMessageToEmailServer("ASSIGNTOPROJECT",ProjectName,EmailAddr);
+                });
+            
+
             const invalidMembers = Members.filter(
                 identifier => !users.some(user =>
                     user.Username === identifier || user.Email === identifier
@@ -339,7 +345,7 @@ app.post('/createproject', async (req, res) => {
 
         // Add creator as a member with role 'Owner'
         members.push({ MemberID: new ObjectId(CreatedBy), Role: 'Owner' });
-
+        
         // Create the project
         const createDate = new Date();
         const project = {
@@ -364,6 +370,7 @@ app.post('/createproject', async (req, res) => {
         return res.status(500).json({ error: "Internal server error" });
     }
 });
+
 
 
 
@@ -426,6 +433,10 @@ app.post('/project_members', async (req, res) => {
         if (newMembers.length === 0) {
             return res.status(400).json({ error: "All members are already in the project." });
         }
+        const addedEmails = users.map(user => user.Email);
+        addedEmails.forEach(EmailAddr => {
+            sendMessageToEmailServer("ASSIGNTOPROJECT",project.ProjectName,EmailAddr);
+        });
 
         // Add new members to the project
         await projectsCollection.updateOne(
@@ -810,7 +821,7 @@ app.delete('/deleteproject', async (req, res) => {
 app.post('/create_task', async (req, res) => {
     const { ProjectID, Title, Description, AssignedTo, DueDate, AdminID, Status } = req.body;
 
-    const validStatuses = ['Pending', 'Ongoing', 'Completed', 'Delayed', 'Canceled']; // Các trạng thái hợp lệ
+    const validStatuses = ['Pending', 'Ongoing', 'Completed', 'Delayed', 'Canceled'];
 
     // Validate input
     if (!ProjectID || !Title || !DueDate || !AdminID) {
@@ -827,28 +838,25 @@ app.post('/create_task', async (req, res) => {
 
     if (Status && !validStatuses.includes(Status)) {
         return res.status(400).json({
-            error: `Invalid status. Allowed statuses are: ${validStatuses.join(', ')}`
+            error: `Invalid status. Allowed statuses are: ${validStatuses.join(', ')}`,
         });
     }
 
     try {
-        // Check if the task already exists in the project
         const existingTask = await db.collection('tasks').findOne({
             ProjectID: new ObjectId(ProjectID),
-            Title: Title
+            Title: Title,
         });
 
         if (existingTask) {
             return res.status(409).json({ error: "Task with the same title already exists in this project." });
         }
 
-        // Fetch the project
         const project = await projectsCollection.findOne({ _id: new ObjectId(ProjectID) });
         if (!project) {
             return res.status(404).json({ error: "Project not found." });
         }
 
-        // Check if AdminID is allowed to create a task
         let userRole = null;
         if (project.CreatedBy.toString() === AdminID) {
             userRole = "Creator";
@@ -863,70 +871,72 @@ app.post('/create_task', async (req, res) => {
             return res.status(403).json({ error: "Only the Creator or Admin can create tasks for this project." });
         }
 
-        // Resolve AssignedTo usernames/emails to IDs
         let assignedToIds = [];
         if (AssignedTo && AssignedTo.length > 0) {
             const users = await userCollection.find({
-                $or: [{ Username: { $in: AssignedTo } }, { Email: { $in: AssignedTo } }]
+                $or: [{ Username: { $in: AssignedTo } }, { Email: { $in: AssignedTo } }],
             }).toArray();
 
-            // Map AssignedTo to IDs
             assignedToIds = users.map(user => user._id);
 
-            // Check if any AssignedTo usernames/emails are invalid
             const invalidUsers = AssignedTo.filter(
                 usernameOrEmail => !users.some(user => user.Username === usernameOrEmail || user.Email === usernameOrEmail)
             );
-            
+
             if (invalidUsers.length > 0) {
                 return res.status(400).json({
                     error: "Some usernames or emails in AssignedTo are invalid.",
-                    invalidUsers
+                    invalidUsers,
                 });
             }
-            
-            // Check if all resolved IDs are members of the project
+
             const invalidMembers = assignedToIds.filter(
                 userId => !project.Members.some(member => member.MemberID.toString() === userId.toString())
             );
-    
+
             if (invalidMembers.length > 0) {
                 const nonMemberDetails = users
                     .filter(user => invalidMembers.some(nonMemberId => nonMemberId.toString() === user._id.toString()))
                     .map(user => user.Username || user.Email);
                 return res.status(400).json({
                     error: "Some users in AssignedTo are not members of the project.",
-                    invalidMembers: nonMemberDetails
+                    invalidMembers: nonMemberDetails,
                 });
             }
+
+            const assignedEmails = users.map(user => user.Email);
+            assignedEmails.forEach(emailAddr => {
+                console.log(`Assigned email: ${emailAddr}, Task: ${Title}`);
+                const body = `:${project.ProjectName}\nNhiệm vụ: ${task.Title}\nHạn chót: ${task.DueDate.toISOString().split('T')[0]}`;
+                sendMessageToEmailServer("ASSIGNTASK", body, emailAddr);
+            });
         }
-        
-        // Create the task
+
         const task = {
             Title,
             Description: Description || "",
             ProjectID: new ObjectId(ProjectID),
-            AssignedTo: assignedToIds, // Lưu danh sách AssignedTo IDs
+            AssignedTo: assignedToIds,
             DueDate: new Date(DueDate),
             CreateDate: new Date(),
-            Status: Status || "Pending", // Sử dụng giá trị mặc định nếu không có Status
+            Status: Status || "Pending",
         };
 
         const result = await db.collection('tasks').insertOne(task);
 
         return res.status(201).json({ message: "Task created successfully!", TaskID: result.insertedId });
     } catch (err) {
-        console.error(err);
+        console.error("Error creating task:", err);
         return res.status(500).json({ error: "Internal server error" });
     }
 });
 
 
 
+
 app.put('/assign_task', async (req, res) => {
     const { TaskID, ProjectID, AdminID, AssignedTo } = req.body;
 
-    // Validate input
     if (!TaskID || !ProjectID || !AdminID || !AssignedTo) {
         return res.status(400).json({ error: "TaskID, ProjectID, AdminID, and AssignedTo are required!" });
     }
@@ -946,29 +956,27 @@ app.put('/assign_task', async (req, res) => {
             return res.status(404).json({ error: "Project not found." });
         }
 
-        // Verify if the AdminID has permission to assign tasks
-        let userRole = null;
-        if (project.CreatedBy.toString() === AdminID) {
-            userRole = "Creator";
-        } else {
-            const adminInProject = project.Members.find(
-                member => member.MemberID.toString() === AdminID && member.Role === "Admin"
-            );
-            userRole = adminInProject ? "Admin" : null;
+        // Fetch the task to include its title in the email
+        const task = await db.collection('tasks').findOne({ _id: new ObjectId(TaskID), ProjectID: new ObjectId(ProjectID) });
+        if (!task) {
+            return res.status(404).json({ error: "Task not found in the specified project." });
         }
 
-        if (!["Creator", "Admin"].includes(userRole)) {
+        // Verify AdminID permissions
+        const isAdmin = project.Members.some(
+            member => member.MemberID.toString() === AdminID && member.Role === "Admin"
+        );
+
+        if (project.CreatedBy.toString() !== AdminID && !isAdmin) {
             return res.status(403).json({ error: "Only the Creator or Admin can assign tasks." });
         }
 
-        // Resolve AssignedTo usernames/emails to user IDs
+        // Resolve AssignedTo usernames/emails to IDs
         const users = await userCollection.find({
             $or: [{ Username: { $in: AssignedTo } }, { Email: { $in: AssignedTo } }]
         }).toArray();
 
         const assignedToIds = users.map(user => user._id);
-
-        // Check for invalid usernames/emails in AssignedTo
         const invalidUsers = AssignedTo.filter(
             identifier => !users.some(user => user.Username === identifier || user.Email === identifier)
         );
@@ -980,7 +988,6 @@ app.put('/assign_task', async (req, res) => {
             });
         }
 
-        // Verify if all resolved IDs are members of the project
         const nonMembers = assignedToIds.filter(
             userId => !project.Members.some(member => member.MemberID.toString() === userId.toString())
         );
@@ -995,10 +1002,22 @@ app.put('/assign_task', async (req, res) => {
             });
         }
 
-        // Add the new AssignedTo IDs to the task's AssignedTo field
+        // Notify assigned users
+        const assignedEmails = users.map(user => user.Email);
+        assignedEmails.forEach(emailAddr => {
+            try {
+                const body = `:${project.ProjectName}\nNhiệm vụ: ${task.Title}\nHạn chót: ${task.DueDate.toISOString().split('T')[0]}`;
+                sendMessageToEmailServer("ASSIGNTASK", body, emailAddr);
+                // console.log(`Email sent to: ${emailAddr}, Task Title: ${task.Title}`);
+            } catch (emailError) {
+                console.error(`Failed to send email to ${emailAddr}: ${emailError.message}`);
+            }
+        });
+
+        // Add AssignedTo IDs to the task
         const result = await db.collection('tasks').updateOne(
             { _id: new ObjectId(TaskID), ProjectID: new ObjectId(ProjectID) },
-            { $addToSet: { AssignedTo: { $each: assignedToIds } } } // Add unique IDs
+            { $addToSet: { AssignedTo: { $each: assignedToIds } } }
         );
 
         if (result.matchedCount === 0) {
@@ -1007,10 +1026,11 @@ app.put('/assign_task', async (req, res) => {
 
         return res.status(200).json({ message: "Task assigned successfully!" });
     } catch (err) {
-        console.error(err);
+        console.error("Error:", err);
         return res.status(500).json({ error: "Internal server error" });
     }
 });
+
 
 
 app.put('/update_task_progress', async (req, res) => {
@@ -1187,7 +1207,7 @@ app.post('/ForgetPassword', async (req, res) => {
                 $inc: { OTPAttempts: 1 }
             }
         );
-        const tcpResponse = await sendMessageToServer('ForgetPassword',OTP, Email);
+        const tcpResponse = await sendMessageToEmailServer('ForgetPassword',OTP, Email);
         return res.status(200).json({ message: "OTP sent successfully!"});
     } catch (err) {
         console.error(err);
@@ -1197,7 +1217,7 @@ app.post('/ForgetPassword', async (req, res) => {
 
 
 // Function to send a message to the server
-function sendMessageToServer(func,body, Email) {
+function sendMessageToEmailServer(func,body, Email) {
     var host = '127.0.0.1'
     var port = 8082;
     return new Promise((resolve, reject) => {
@@ -1279,10 +1299,6 @@ app.post('/ResetPassword', async (req, res) => {
         return res.status(500).json({ error: "Internal server error." });
     }
 });
-
-
-
-
 
 
 const PORT = 3000;
