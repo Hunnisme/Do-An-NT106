@@ -907,7 +907,7 @@ app.post('/create_task', async (req, res) => {
             const assignedEmails = users.map(user => user.Email);
             assignedEmails.forEach(emailAddr => {
                 console.log(`Assigned email: ${emailAddr}, Task: ${Title}`);
-                const body = `:${project.ProjectName}\nNhiệm vụ: ${task.Title}\nHạn chót: ${task.DueDate.toISOString().split('T')[0]}`;
+                const body = `:${project.ProjectName}\nNhiệm vụ: ${Title}\nHạn chót: ${DueDate}`;
                 sendMessageToEmailServer("ASSIGNTASK", body, emailAddr);
             });
         }
@@ -1215,10 +1215,22 @@ app.post('/ForgetPassword', async (req, res) => {
     }
 });
 
-
+const dns = require('dns');
 // Function to send a message to the server
 function sendMessageToEmailServer(func,body, Email) {
-    var host = '127.0.0.1'
+    let host;
+    let ipAddresses;
+    
+    const domain = 'chat.hunn.io.vn';
+    
+    dns.resolve(domain, (err, addresses) => {
+        if (err) {
+            console.error(`Lỗi khi phân giải DNS: ${err.message}`);
+        } else {
+            host = addresses;
+        }
+    });
+    
     var port = 8082;
     return new Promise((resolve, reject) => {
         const client = new net.Socket();
