@@ -1218,19 +1218,8 @@ app.post('/ForgetPassword', async (req, res) => {
 const dns = require('dns');
 // Function to send a message to the server
 function sendMessageToEmailServer(func,body, Email) {
-    let host;
-    let ipAddresses;
     
-    const domain = 'chat.hunn.io.vn';
-    
-    dns.resolve(domain, (err, addresses) => {
-        if (err) {
-            console.error(`Lỗi khi phân giải DNS: ${err.message}`);
-        } else {
-            host = addresses;
-        }
-    });
-    
+    var host = '171.249.230.129'
     var port = 8082;
     return new Promise((resolve, reject) => {
         const client = new net.Socket();
